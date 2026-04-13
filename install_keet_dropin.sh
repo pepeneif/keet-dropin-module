@@ -324,7 +324,7 @@ const net = require('net')
 const crypto = require('crypto')
 const hypercore = require('hypercore')
 const RAF = require('random-access-file')
-const { createInvite } = require('blind-pairing-core')
+const { createInvite, decodeInvite } = require('blind-pairing-core')
 const { encode, decode } = require('hypercore-id-encoding')
 
 const BASE_DIR = '${ROOMS_DIR_JS}'
@@ -344,7 +344,43 @@ function normalizeInvite(url) {
   const m = String(url || '').trim().match(/^pear:\/\/keet\/([^/\s]+)$/)
   if (!m) throw new Error('Invalid Keet invite URL. Expected pear://keet/<roomId>')
   const roomId = m[1]
-  return { roomId, inviteUrl: 'pear://keet/' + roomId }
+
+  let payload
+  try {
+    payload = decode(roomId)
+  } catch (_) {
+    throw new Error('Invalid Keet invite URL payload')
+  }
+
+  // Backward compatibility: older installer versions encoded only discoveryKey.
+  if (payload.byteLength === 32) {
+    return {
+      roomId,
+      inviteUrl: 'pear://keet/' + roomId,
+      discoveryKey: payload,
+      invitePayload: null,
+      inviteFormat: 'legacy-discovery-key'
+    }
+  }
+
+  let decodedInvite
+  try {
+    decodedInvite = decodeInvite(payload)
+  } catch (_) {
+    throw new Error('Invalid Keet invite payload. Expected canonical blind-pairing invite data')
+  }
+
+  if (!decodedInvite.discoveryKey || decodedInvite.discoveryKey.byteLength !== 32) {
+    throw new Error('Invalid Keet invite payload. Missing discovery key')
+  }
+
+  return {
+    roomId,
+    inviteUrl: 'pear://keet/' + roomId,
+    discoveryKey: decodedInvite.discoveryKey,
+    invitePayload: payload,
+    inviteFormat: 'canonical-invite'
+  }
 }
 
 function storageFactory(storagePath) {
@@ -402,7 +438,7 @@ async function ensureSession(params) {
   }
 
   const invite = normalizeInvite(params.url)
-  const discoveryKey = decode(invite.roomId)
+  const discoveryKey = invite.discoveryKey
   const storagePath = path.join(STORAGE_DIR, invite.roomId + '_' + sessionId)
   const core = hypercore(storageFactory(storagePath), discoveryKey, { valueEncoding: 'utf-8' })
   await core.ready()
@@ -444,8 +480,8 @@ async function cmdCreateRoom(params = {}) {
   const roomName = String(params.roomName || '').trim() || crypto.randomUUID()
   const sessionId = crypto.randomUUID()
   const key = crypto.randomBytes(32)
-  const { discoveryKey } = createInvite(key)
-  const roomId = encode(discoveryKey)
+  const { invite } = createInvite(key)
+  const roomId = encode(invite)
   return {
     roomId,
     inviteUrl: 'pear://keet/' + roomId,
