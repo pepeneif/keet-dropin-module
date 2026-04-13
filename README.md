@@ -21,8 +21,10 @@
 
 ```
 keet-dropin-module/
-├─ install_keet_dropin.sh      ← the all‑in‑one installer (the only file you need to run)
-└─ README.md                  ← you are reading it right now
+├─ install_keet_dropin.sh ← the all‑in‑one installer (the only file you need to run)
+├─ run.sh                 ← tiny wrapper that simply calls the installer after a git clone
+├─ package.json           ← npm manifest; exposes the installer as a binary (`keet-dropin`)
+└─ README.md              ← you are reading it right now
 ```
 
 All other files (the generated skills, channel plug‑ins, etc.) are created **at install time** inside the agent’s workspace (`~/.nanobot/workspace`, `~/.copaw`, `~/.hermes` or OpenClaw’s `src/` tree).
