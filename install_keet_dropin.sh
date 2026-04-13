@@ -298,7 +298,7 @@ if [[ ! -f "package.json" ]]; then
 fi
 
 log "Installing required npm dependencies..."
-"$NPM_BIN" install blind-pairing-core hypercore-id-encoding hypercore random-access-file || error "Failed to install npm dependencies"
+"$NPM_BIN" install blind-pairing-core hypercore-id-encoding hypercore random-access-file z32 || error "Failed to install npm dependencies"
 log "Dependencies installed"
 
 # -------------------------------------------------------------------------
@@ -325,7 +325,8 @@ const crypto = require('crypto')
 const hypercore = require('hypercore')
 const RAF = require('random-access-file')
 const { createInvite, decodeInvite } = require('blind-pairing-core')
-const { encode, decode } = require('hypercore-id-encoding')
+const { decode: decodeCoreKey } = require('hypercore-id-encoding')
+const z32 = require('z32')
 
 const BASE_DIR = '${ROOMS_DIR_JS}'
 const SOCKET_PATH = path.join(BASE_DIR, 'keet-core.sock')
@@ -345,27 +346,38 @@ function normalizeInvite(url) {
   if (!m) throw new Error('Invalid Keet invite URL. Expected pear://keet/<roomId>')
   const roomId = m[1]
 
-  let payload
+  // Backward compatibility: older installer versions encoded only discoveryKey
+  // using hypercore-id-encoding (52-char z32 / 64-char hex).
+  if (roomId.length === 52 || roomId.length === 64) {
+    let discoveryKey
+    try {
+      discoveryKey = decodeCoreKey(roomId)
+    } catch (_) {
+      discoveryKey = null
+    }
+
+    if (discoveryKey && discoveryKey.byteLength === 32) {
+      return {
+        roomId,
+        inviteUrl: 'pear://keet/' + roomId,
+        discoveryKey,
+        invitePayload: null,
+        inviteFormat: 'legacy-discovery-key'
+      }
+    }
+  }
+
+  // Canonical Keet room IDs are z32-encoded blind-pairing invite payloads.
+  let invitePayload
   try {
-    payload = decode(roomId)
+    invitePayload = z32.decode(roomId)
   } catch (_) {
     throw new Error('Invalid Keet invite URL payload')
   }
 
-  // Backward compatibility: older installer versions encoded only discoveryKey.
-  if (payload.byteLength === 32) {
-    return {
-      roomId,
-      inviteUrl: 'pear://keet/' + roomId,
-      discoveryKey: payload,
-      invitePayload: null,
-      inviteFormat: 'legacy-discovery-key'
-    }
-  }
-
   let decodedInvite
   try {
-    decodedInvite = decodeInvite(payload)
+    decodedInvite = decodeInvite(invitePayload)
   } catch (_) {
     throw new Error('Invalid Keet invite payload. Expected canonical blind-pairing invite data')
   }
@@ -378,7 +390,7 @@ function normalizeInvite(url) {
     roomId,
     inviteUrl: 'pear://keet/' + roomId,
     discoveryKey: decodedInvite.discoveryKey,
-    invitePayload: payload,
+    invitePayload,
     inviteFormat: 'canonical-invite'
   }
 }
@@ -481,7 +493,7 @@ async function cmdCreateRoom(params = {}) {
   const sessionId = crypto.randomUUID()
   const key = crypto.randomBytes(32)
   const { invite } = createInvite(key)
-  const roomId = encode(invite)
+  const roomId = z32.encode(invite)
   return {
     roomId,
     inviteUrl: 'pear://keet/' + roomId,
@@ -1652,9 +1664,9 @@ if [[ "$AGENT_TYPE" == "hermes" ]]; then
   echo "  - Hermes plugins are loaded from ~/.hermes/plugins/<plugin-dir>/ with plugin.yaml + __init__.py."
   echo "  - This installer creates ~/.hermes/plugins/keet-dropin/ and keeps keet_plugin.py as legacy helper."
   echo "  - This installer uses Node deps: blind-pairing-core, hypercore-id-encoding,"
-  echo "    hypercore, random-access-file (not an official 'keet' npm package)."
+  echo "    hypercore, random-access-file, z32 (not an official 'keet' npm package)."
   echo "  - If dependencies are missing or broken, reinstall with:"
-  echo "    $NPM_BIN install blind-pairing-core hypercore-id-encoding hypercore random-access-file"
+  echo "    $NPM_BIN install blind-pairing-core hypercore-id-encoding hypercore random-access-file z32"
   echo "  - After install, verify plugin discovery with: hermes plugins list"
   echo "  - If Hermes auto-repair rewrites plugin state, restore this directory:"
   echo "    ${PLUGIN_ROOT:-<not-applicable>}/keet-dropin"
