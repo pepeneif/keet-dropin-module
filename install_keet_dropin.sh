@@ -332,14 +332,126 @@ const BASE_DIR = '${ROOMS_DIR_JS}'
 const SOCKET_PATH = path.join(BASE_DIR, 'keet-core.sock')
 const PID_PATH = path.join(BASE_DIR, 'keet-core.pid')
 const STATE_PATH = path.join(BASE_DIR, 'keet-state.json')
+const KEY_MATERIAL_PATH = path.join(BASE_DIR, 'keet-key-material.json')
 const STORAGE_DIR = path.join(BASE_DIR, 'sessions')
 
+fs.mkdirSync(BASE_DIR, { recursive: true })
 fs.mkdirSync(STORAGE_DIR, { recursive: true })
 
 const sessions = new Map()
 let nextEventId = 1
 const events = []
 const waiters = new Set()
+let keyMaterial = null
+let agentIdentityKey = null
+
+function nowIso() {
+  return new Date().toISOString()
+}
+
+function writeJsonAtomicSecure(filePath, data) {
+  const tmpPath = filePath + '.tmp'
+  const payload = JSON.stringify(data, null, 2)
+  fs.writeFileSync(tmpPath, payload, { mode: 0o600 })
+  fs.renameSync(tmpPath, filePath)
+  try { fs.chmodSync(filePath, 0o600) } catch (_) {}
+}
+
+function decodeBase64Key(value, label) {
+  const buf = Buffer.from(String(value || ''), 'base64')
+  if (buf.byteLength !== 32) {
+    throw new Error('Invalid key material for ' + label + ': expected 32 bytes')
+  }
+  return buf
+}
+
+function buildDefaultKeyMaterial() {
+  const createdAt = nowIso()
+  return {
+    schemaVersion: 1,
+    createdAt,
+    updatedAt: createdAt,
+    agentIdentity: {
+      secretKey: crypto.randomBytes(32).toString('base64'),
+      createdAt
+    },
+    roomOwnership: {}
+  }
+}
+
+function normalizeKeyMaterial(raw) {
+  const normalized = buildDefaultKeyMaterial()
+  if (!raw || typeof raw !== 'object') return normalized
+
+  if (typeof raw.createdAt === 'string') {
+    normalized.createdAt = raw.createdAt
+  }
+
+  if (raw.agentIdentity && typeof raw.agentIdentity === 'object' && typeof raw.agentIdentity.secretKey === 'string') {
+    try {
+      decodeBase64Key(raw.agentIdentity.secretKey, 'agentIdentity.secretKey')
+      normalized.agentIdentity = {
+        secretKey: raw.agentIdentity.secretKey,
+        createdAt: typeof raw.agentIdentity.createdAt === 'string' ? raw.agentIdentity.createdAt : normalized.createdAt
+      }
+    } catch (_) {}
+  }
+
+  if (raw.roomOwnership && typeof raw.roomOwnership === 'object') {
+    for (const [roomId, roomMeta] of Object.entries(raw.roomOwnership)) {
+      if (!roomMeta || typeof roomMeta !== 'object') continue
+      if (typeof roomMeta.ownerKey !== 'string') continue
+
+      try {
+        decodeBase64Key(roomMeta.ownerKey, 'roomOwnership.' + roomId + '.ownerKey')
+      } catch (_) {
+        continue
+      }
+
+      normalized.roomOwnership[roomId] = {
+        ownerKey: roomMeta.ownerKey,
+        roomName: typeof roomMeta.roomName === 'string' ? roomMeta.roomName : '',
+        createdAt: typeof roomMeta.createdAt === 'string' ? roomMeta.createdAt : normalized.createdAt
+      }
+    }
+  }
+
+  return normalized
+}
+
+function loadKeyMaterial() {
+  let parsed = null
+
+  if (fs.existsSync(KEY_MATERIAL_PATH)) {
+    try {
+      parsed = JSON.parse(fs.readFileSync(KEY_MATERIAL_PATH, 'utf-8'))
+    } catch (_) {
+      parsed = null
+    }
+  }
+
+  const normalized = normalizeKeyMaterial(parsed)
+  normalized.updatedAt = nowIso()
+  writeJsonAtomicSecure(KEY_MATERIAL_PATH, normalized)
+  return normalized
+}
+
+function initializeKeyMaterial() {
+  if (keyMaterial) return
+  keyMaterial = loadKeyMaterial()
+  agentIdentityKey = decodeBase64Key(keyMaterial.agentIdentity.secretKey, 'agentIdentity.secretKey')
+}
+
+function persistKeyMaterial() {
+  if (!keyMaterial) return
+  keyMaterial.updatedAt = nowIso()
+  writeJsonAtomicSecure(KEY_MATERIAL_PATH, keyMaterial)
+}
+
+function agentIdentityFingerprint() {
+  initializeKeyMaterial()
+  return crypto.createHash('sha256').update(agentIdentityKey).digest('hex').slice(0, 16)
+}
 
 function normalizeInvite(url) {
   const m = String(url || '').trim().match(/^pear:\/\/keet\/([^/\s]+)$/)
@@ -489,11 +601,20 @@ async function ensureSession(params) {
 }
 
 async function cmdCreateRoom(params = {}) {
+  initializeKeyMaterial()
   const roomName = String(params.roomName || '').trim() || crypto.randomUUID()
   const sessionId = crypto.randomUUID()
-  const key = crypto.randomBytes(32)
-  const { invite } = createInvite(key)
+  const ownerKey = crypto.randomBytes(32)
+  const { invite } = createInvite(ownerKey)
   const roomId = z32.encode(invite)
+
+  keyMaterial.roomOwnership[roomId] = {
+    ownerKey: ownerKey.toString('base64'),
+    roomName,
+    createdAt: nowIso()
+  }
+  persistKeyMaterial()
+
   return {
     roomId,
     inviteUrl: 'pear://keet/' + roomId,
@@ -668,6 +789,7 @@ async function shutdown(server) {
 
 async function main() {
   cleanupSocket()
+  const identity = agentIdentityFingerprint()
   await restoreSessions()
 
   const server = net.createServer((socket) => {
@@ -703,7 +825,7 @@ async function main() {
 
   server.listen(SOCKET_PATH, () => {
     fs.writeFileSync(PID_PATH, String(process.pid))
-    console.log('Keet core daemon listening on ' + SOCKET_PATH)
+    console.log('Keet core daemon listening on ' + SOCKET_PATH + ' (agent ' + identity + ')')
   })
 
   process.on('SIGINT', () => shutdown(server))
