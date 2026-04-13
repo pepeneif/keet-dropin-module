@@ -17,7 +17,7 @@ This version installs a **shared always-on Keet core** and keeps adapter behavio
 4. **Easy‑to‑use clients and increased adoption**: Keet.io has desktop and mobile clients that are very easy to install and use. With a mechanism like this enabling users to interact with agents securely, efficiently, and intuitively, the adoption of Keet.io as a communication platform is likely to increase—both for human‑to‑agent communication and for humans communicating with other humans, preferring Keet.io over Telegram, WhatsApp, Discord, etc.
 
 ---
-## 2) What this module now provides
+## 2) What this module provides
 
 | Capability | How it works |
 |---|---|
