@@ -45,6 +45,15 @@ Examples:
   # Non-interactive install for Hermes
   bash install_keet_dropin.sh --target hermes
 
+  # Non-interactive install for NanoBot
+  bash install_keet_dropin.sh --target nanobot
+
+  # Non-interactive install for CoPaw / QwenPaw
+  bash install_keet_dropin.sh --target copaw
+
+  # Non-interactive install for OpenClaw (run from OpenClaw repo root)
+  bash install_keet_dropin.sh --target openclaw
+
   # Remote install with explicit target
   bash <(curl -fsSL https://raw.githubusercontent.com/pepeneif/keet-dropin-module/main/install_keet_dropin.sh) --target hermes
 
@@ -149,6 +158,25 @@ validate_target_prereqs() {
   esac
 }
 
+validate_target_capabilities() {
+  case "$1" in
+    nanobot)
+      if ! nanobot --help >/dev/null 2>&1; then
+        warn "NanoBot binary is present but 'nanobot --help' failed. Continuing; runtime command surface may differ."
+      fi
+      ;;
+    copaw)
+      copaw channels --help >/dev/null 2>&1 || error "--target copaw requires a CoPaw CLI with 'channels' support (expected command: 'copaw channels ...')."
+      ;;
+    openclaw)
+      [[ -w "$WORKSPACE" ]] || error "OpenClaw workspace is not writable: $WORKSPACE"
+      if ! grep -qi 'openclaw' "$WORKSPACE/package.json"; then
+        warn "OpenClaw target selected, but package.json does not appear to reference openclaw explicitly. Verify plugin SDK compatibility manually."
+      fi
+      ;;
+  esac
+}
+
 # -------------------------------------------------------------------------
 # Detect OS and architecture for Node download
 # -------------------------------------------------------------------------
@@ -225,6 +253,8 @@ case "$AGENT_TYPE" in
     ROOMS_DIR="${HOME}/.openclaw/rooms"
     ;;
 esac
+
+validate_target_capabilities "$AGENT_TYPE"
 
 mkdir -p "$WORKSPACE"
 mkdir -p "$SKILLS_ROOT"
@@ -819,6 +849,8 @@ EOF
 chmod +x "${SKILLS_ROOT}/keet-core/client.js"
 log "Shared keet-core generated"
 
+COPAW_CHANNEL_REGISTERED="not-applicable"
+
 # ---- keet-create-room ---------------------------------------------------
 cat > "${SKILLS_ROOT}/keet-create-room/SKILL.md" <<'EOF'
 ---
@@ -1140,8 +1172,13 @@ class KeetChannel(BaseChannel):
 channel = KeetChannel()
 EOF
 
-  copaw channels add keet >/dev/null 2>&1 || true
-  log "CoPaw channel 'keet' generated and registered"
+  if copaw channels add keet >/dev/null 2>&1; then
+    COPAW_CHANNEL_REGISTERED="yes"
+    log "CoPaw channel 'keet' generated and registered"
+  else
+    COPAW_CHANNEL_REGISTERED="no"
+    warn "CoPaw channel auto-registration failed. Register manually with: copaw channels add keet"
+  fi
 fi
 
 # ---- Hermes-agent --------------------------------------------------------
@@ -1585,6 +1622,30 @@ if [[ "$AGENT_TYPE" == "hermes" ]]; then
   echo "  - After install, verify plugin discovery with: hermes plugins list"
   echo "  - If Hermes auto-repair rewrites plugin state, restore this directory:"
   echo "    ${PLUGIN_ROOT:-<not-applicable>}/keet-dropin"
+fi
+
+if [[ "$AGENT_TYPE" == "nanobot" ]]; then
+  echo "NanoBot operational notes:"
+  echo "  - Skills were installed under: ${SKILLS_ROOT}"
+  echo "  - Rooms state is persisted under: ${ROOMS_DIR}"
+  echo "  - Use NanoBot skill invocations such as: nanobot agent -m \"keet-list-sessions\""
+fi
+
+if [[ "$AGENT_TYPE" == "copaw" ]]; then
+  echo "CoPaw/QwenPaw operational notes:"
+  echo "  - Custom channel file: ${CHANNEL_ROOT}/keet_channel.py"
+  echo "  - Channel registration status: ${COPAW_CHANNEL_REGISTERED}"
+  if [[ "$COPAW_CHANNEL_REGISTERED" == "no" ]]; then
+    echo "  - Manual registration command: copaw channels add keet"
+  fi
+  echo "  - Rooms state is persisted under: ${ROOMS_DIR}"
+fi
+
+if [[ "$AGENT_TYPE" == "openclaw" ]]; then
+  echo "OpenClaw operational notes:"
+  echo "  - Plugin file generated at: ${PLUGIN_ROOT}/keet-channel.ts"
+  echo "  - Ensure your OpenClaw runtime loads this plugin according to your plugin registry/import flow."
+  echo "  - Rooms state is persisted under: ${ROOMS_DIR}"
 fi
 echo ""
 echo "Persistent storage: $ROOMS_DIR"

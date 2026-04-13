@@ -67,6 +67,15 @@ bash install_keet_dropin.sh
 # Explicit non-interactive Hermes install
 bash install_keet_dropin.sh --target hermes
 
+# Explicit non-interactive NanoBot install
+bash install_keet_dropin.sh --target nanobot
+
+# Explicit non-interactive CoPaw/QwenPaw install
+bash install_keet_dropin.sh --target copaw
+
+# Explicit non-interactive OpenClaw install (from OpenClaw workspace root)
+bash install_keet_dropin.sh --target openclaw
+
 # Explicit auto mode (fails if multiple runtimes are detected)
 bash install_keet_dropin.sh --target auto
 
@@ -85,6 +94,22 @@ The installer writes a Hermes plugin directory compatible with Hermes plugin dis
 ```
 
 It also writes `~/.hermes/plugins/keet_plugin.py` as a backward-compatible helper for previous installer outputs.
+
+### Cross-target hardening notes
+
+- **NanoBot**
+  - Validates `nanobot` binary presence and warns if CLI help probing fails.
+  - Uses `~/.nanobot/workspace/skills/` for skills and `~/.nanobot/rooms/` for persistent rooms.
+
+- **CoPaw/QwenPaw**
+  - Requires `copaw channels` command surface.
+  - Writes adapter to `~/.copaw/custom_channels/keet_channel.py`.
+  - Attempts `copaw channels add keet` and reports explicit registration status.
+
+- **OpenClaw**
+  - Requires execution from OpenClaw workspace root (`./src` + `./package.json`).
+  - Verifies workspace write access before generating plugin.
+  - Warns if `package.json` does not appear to reference OpenClaw.
 
 ---
 
@@ -226,8 +251,8 @@ This ensures Keet behaves like a real long-lived channel integration rather than
 |---|---|---|---|
 | Hermes-agent | `bash install_keet_dropin.sh --target hermes` | `~/.hermes/rooms/` | `~/.hermes/plugins/keet-dropin/` + legacy `~/.hermes/plugins/keet_plugin.py` |
 | NanoBot | `bash install_keet_dropin.sh --target nanobot` | `~/.nanobot/rooms/` | `~/.nanobot/workspace/skills/` |
-| CoPaw/QwenPaw | `bash install_keet_dropin.sh --target copaw` | `~/.copaw/rooms/` | `~/.copaw/custom_channels/keet_channel.py` |
-| OpenClaw | `bash install_keet_dropin.sh --target openclaw` | `~/.openclaw/rooms/` | `./src/plugins/keet-channel/keet-channel.ts` |
+| CoPaw/QwenPaw | `bash install_keet_dropin.sh --target copaw` | `~/.copaw/rooms/` | `~/.copaw/custom_channels/keet_channel.py` + registration status reported by installer |
+| OpenClaw | `bash install_keet_dropin.sh --target openclaw` | `~/.openclaw/rooms/` | `./src/plugins/keet-channel/keet-channel.ts` (run from OpenClaw repo root) |
 
 ---
 
