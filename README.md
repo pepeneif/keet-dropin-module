@@ -50,7 +50,7 @@ The installer script [`install_keet_dropin.sh`](install_keet_dropin.sh) does the
 2. Uses auto-detection **only** when target is explicitly set to `auto`.
 3. Fails fast in non-interactive mode if `--target` is missing.
 4. Installs Node `v20.12.0` inside the selected workspace (if absent).
-5. Installs npm deps: `blind-pairing-core`, `hypercore-id-encoding`, `hypercore`, `random-access-file`, `z32`.
+5. Installs npm deps: `blind-pairing-core`, `hypercore-id-encoding`, `hypercore`, `random-access-file`.
 6. Performs pre-install daemon hygiene: stops stale Keet daemon and clears stale IPC files (`keet-core.sock`, `keet-core.pid`).
 7. Creates persistent storage in the selected runtime path (Hermes: `~/.hermes/rooms/` + `~/.hermes/rooms/sessions/`).
 8. Supports optional `--reset-state` to back up and purge persisted state files (`keet-key-material.json`, `keet-state.json`) before regeneration.
@@ -143,6 +143,8 @@ Creates room metadata and returns JSON:
   "roomName": "..."
 }
 ```
+
+`inviteUrl` is emitted as `pear://keet/<roomId>` where `<roomId>` is encoded with `hypercore-id-encoding` (discovery-key format accepted by Keet.io clients).
 
 ### `keet-join-room`
 
@@ -243,10 +245,11 @@ Checklist:
 4. Confirm Hermes sees plugins:
    - `hermes plugins list`
 5. If dependencies are damaged, reinstall them in Hermes workspace:
-   - `~/.hermes/node-v20.12.0-<platform>/bin/npm install blind-pairing-core hypercore-id-encoding hypercore random-access-file z32`
-6. Validate canonical room creation output:
+   - `~/.hermes/node-v20.12.0-<platform>/bin/npm install blind-pairing-core hypercore-id-encoding hypercore random-access-file`
+6. Validate Keet-client-compatible room creation output:
    - `~/.hermes/node-v20.12.0-<platform>/bin/node ~/.hermes/skills/keet-create-room/create_room.js 'Hermes'`
    - expected: JSON including `roomId`, `inviteUrl` (`pear://keet/...`), `sessionId`, `roomName`
+   - `inviteUrl` should be accepted by Keet.io desktop/mobile clients (no "The link is not a valid link" error)
 
 If `create_room.js` fails with key-length errors or hangs because of stale runtime state, run this safe reset bundle:
 

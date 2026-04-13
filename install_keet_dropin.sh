@@ -376,7 +376,7 @@ if [[ ! -f "package.json" ]]; then
 fi
 
 log "Installing required npm dependencies..."
-"$NPM_BIN" install blind-pairing-core hypercore-id-encoding hypercore random-access-file z32 || error "Failed to install npm dependencies"
+"$NPM_BIN" install blind-pairing-core hypercore-id-encoding hypercore random-access-file || error "Failed to install npm dependencies"
 log "Dependencies installed"
 
 # -------------------------------------------------------------------------
@@ -403,8 +403,7 @@ const crypto = require('crypto')
 const hypercore = require('hypercore')
 const RAF = require('random-access-file')
 const { createInvite, decodeInvite } = require('blind-pairing-core')
-const { decode: decodeCoreKey } = require('hypercore-id-encoding')
-const z32 = require('z32')
+const { encode: encodeCoreKey, decode: decodeCoreKey } = require('hypercore-id-encoding')
 
 const BASE_DIR = '${ROOMS_DIR_JS}'
 const SOCKET_PATH = path.join(BASE_DIR, 'keet-core.sock')
@@ -536,52 +535,23 @@ function normalizeInvite(url) {
   if (!m) throw new Error('Invalid Keet invite URL. Expected pear://keet/<roomId>')
   const roomId = m[1]
 
-  // Backward compatibility: older installer versions encoded only discoveryKey
-  // using hypercore-id-encoding (52-char z32 / 64-char hex).
-  if (roomId.length === 52 || roomId.length === 64) {
-    let discoveryKey
-    try {
-      discoveryKey = decodeCoreKey(roomId)
-    } catch (_) {
-      discoveryKey = null
-    }
-
-    if (discoveryKey && discoveryKey.byteLength === 32) {
-      return {
-        roomId,
-        inviteUrl: 'pear://keet/' + roomId,
-        discoveryKey,
-        invitePayload: null,
-        inviteFormat: 'legacy-discovery-key'
-      }
-    }
-  }
-
-  // Canonical Keet room IDs are z32-encoded blind-pairing invite payloads.
-  let invitePayload
+  let discoveryKey
   try {
-    invitePayload = z32.decode(roomId)
+    discoveryKey = decodeCoreKey(roomId)
   } catch (_) {
-    throw new Error('Invalid Keet invite URL payload')
+    throw new Error('Invalid Keet invite URL payload. Expected hypercore-id-encoding room id')
   }
 
-  let decodedInvite
-  try {
-    decodedInvite = decodeInvite(invitePayload)
-  } catch (_) {
-    throw new Error('Invalid Keet invite payload. Expected canonical blind-pairing invite data')
-  }
-
-  if (!decodedInvite.discoveryKey || decodedInvite.discoveryKey.byteLength !== 32) {
-    throw new Error('Invalid Keet invite payload. Missing discovery key')
+  if (!discoveryKey || discoveryKey.byteLength !== 32) {
+    throw new Error('Invalid Keet invite URL payload. Missing discovery key')
   }
 
   return {
     roomId,
     inviteUrl: 'pear://keet/' + roomId,
-    discoveryKey: decodedInvite.discoveryKey,
-    invitePayload,
-    inviteFormat: 'canonical-invite'
+    discoveryKey,
+    invitePayload: null,
+    inviteFormat: 'discovery-key'
   }
 }
 
@@ -684,7 +654,11 @@ async function cmdCreateRoom(params = {}) {
   const sessionId = crypto.randomUUID()
   const ownerKey = crypto.randomBytes(32)
   const { invite } = createInvite(ownerKey)
-  const roomId = z32.encode(invite)
+  const decodedInvite = decodeInvite(invite)
+  if (!decodedInvite.discoveryKey || decodedInvite.discoveryKey.byteLength !== 32) {
+    throw new Error('Failed to derive discovery key for room invite')
+  }
+  const roomId = encodeCoreKey(decodedInvite.discoveryKey)
 
   keyMaterial.roomOwnership[roomId] = {
     ownerKey: ownerKey.toString('base64'),
@@ -1868,9 +1842,9 @@ if [[ "$AGENT_TYPE" == "hermes" ]]; then
   echo "  - Hermes plugins are loaded from ~/.hermes/plugins/<plugin-dir>/ with plugin.yaml + __init__.py."
   echo "  - This installer creates ~/.hermes/plugins/keet-dropin/ and keeps keet_plugin.py as legacy helper."
   echo "  - This installer uses Node deps: blind-pairing-core, hypercore-id-encoding,"
-  echo "    hypercore, random-access-file, z32 (not an official 'keet' npm package)."
+  echo "    hypercore, random-access-file (not an official 'keet' npm package)."
   echo "  - If dependencies are missing or broken, reinstall with:"
-  echo "    $NPM_BIN install blind-pairing-core hypercore-id-encoding hypercore random-access-file z32"
+  echo "    $NPM_BIN install blind-pairing-core hypercore-id-encoding hypercore random-access-file"
   echo "  - After install, verify plugin discovery with: hermes plugins list"
   echo "  - If Hermes auto-repair rewrites plugin state, restore this directory:"
   echo "    ${PLUGIN_ROOT:-<not-applicable>}/keet-dropin"
