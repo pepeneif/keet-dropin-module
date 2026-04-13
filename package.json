@@ -1,0 +1,27 @@
+{
+  "name": "keet-dropin-module",
+  "version": "0.1.0",
+  "description": "Keet P2P chat drop‑in for OpenClaw‑compatible agents (Nanobot, CoPaw/QwenPaw, Hermes‑agent, OpenClaw).",
+  "main": "install_keet_dropin.sh",
+  "bin": {
+    "keet-dropin": "./install_keet_dropin.sh"
+  },
+  "scripts": {
+    "install:keet": "bash ./install_keet_dropin.sh"
+  },
+  "keywords": [
+    "keet",
+    "p2p",
+    "hypercore",
+    "plugin",
+    "openclaw",
+    "nanobot",
+    "copaw",
+    "hermes-agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pepeneif/keet-dropin-module.git"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,6 @@
+# Node stuff
+node_modules/
+*.log
+
+# Keet‑drop‑in artefactos que no quieres versionar
+# (la carpeta de historial se crea fuera del repo)
