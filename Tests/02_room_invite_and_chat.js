@@ -10,6 +10,9 @@ const { createInvite, decodeInvite } = require('blind-pairing-core')
 const { encode: encodeCoreKey, decode: decodeCoreKey } = require('hypercore-id-encoding')
 const z32 = require('z32')
 
+const INVITE_FORMAT_DISCOVERY = 'discovery-key'
+const INVITE_FORMAT_CANONICAL = 'canonical-invite'
+
 const DEFAULT_INVITE_PORT = 49737
 const DEFAULT_INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const DEFAULT_INVITE_NODES = [
@@ -32,6 +35,9 @@ Usage:
   # Create room, print metadata, and exit
   node ./Tests/02_room_invite_and_chat.js --create-only
 
+  # Create room with experimental long canonical invite URL
+  node ./Tests/02_room_invite_and_chat.js --create-only --invite-format canonical
+
   # Join an existing room by invite URL and keep chat open
   node ./Tests/02_room_invite_and_chat.js --invite pear://keet/<roomId> --name GuestUser
 
@@ -39,17 +45,30 @@ Options:
   --name <text>          Display name in chat (default: random peer id)
   --invite <url>         Existing room invite URL (pear://keet/<roomId>)
   --key <hex|base64>     32-byte key for deterministic room creation (only when creating)
+  --invite-format <fmt>  Invite generation format: discovery (default) | canonical (experimental)
   --create-only          Only create/validate room + invite URL and exit
   --save <file>          Save room metadata to JSON file
   --no-stdin             Keep connection/watch loop but disable local keyboard input
   --help                 Show this help
 
 Notes:
-  - This script generates canonical Keet inviteURL using blind-pairing payload (z32),
-    with backward-compatible parsing for legacy discovery-key roomIds.
+  - Default generation uses Keet-client-compatible discovery-key roomIds.
+  - Experimental long canonical blind-pairing invite format is opt-in via --invite-format canonical.
+  - Parsing accepts both formats so you can still join either type.
   - It keeps a room topic open while running and allows message exchange with other participants
     running this same script in the same invite URL.
 `)
+}
+
+function normalizeInviteFormat(raw) {
+  const value = String(raw || '').trim().toLowerCase()
+  if (!value || value === 'discovery' || value === 'discovery-key' || value === 'compat' || value === 'client') {
+    return INVITE_FORMAT_DISCOVERY
+  }
+  if (value === 'canonical' || value === 'canonical-invite' || value === 'long') {
+    return INVITE_FORMAT_CANONICAL
+  }
+  throw new Error('Invalid --invite-format value. Expected discovery or canonical.')
 }
 
 function parseArgs(argv) {
@@ -57,6 +76,7 @@ function parseArgs(argv) {
     name: null,
     invite: null,
     key: null,
+    inviteFormat: INVITE_FORMAT_DISCOVERY,
     createOnly: false,
     save: null,
     stdin: true,
@@ -75,6 +95,10 @@ function parseArgs(argv) {
     }
     if (token === '--key' && i + 1 < argv.length) {
       cfg.key = argv[++i]
+      continue
+    }
+    if (token === '--invite-format' && i + 1 < argv.length) {
+      cfg.inviteFormat = normalizeInviteFormat(argv[++i])
       continue
     }
     if (token === '--create-only') {
@@ -122,7 +146,7 @@ function parseInviteUrl(url) {
         roomId,
         inviteUrl: `pear://keet/${roomId}`,
         discoveryKey: Buffer.from(legacyDiscoveryKey),
-        inviteFormat: 'legacy-discovery-key',
+        inviteFormat: INVITE_FORMAT_DISCOVERY,
         invitePayload: null
       }
     }
@@ -151,12 +175,12 @@ function parseInviteUrl(url) {
     roomId,
     inviteUrl: `pear://keet/${roomId}`,
     discoveryKey: Buffer.from(decoded.discoveryKey),
-    inviteFormat: 'canonical-invite',
+    inviteFormat: INVITE_FORMAT_CANONICAL,
     invitePayload
   }
 }
 
-function createRoomFromKey(keyBuf) {
+function createRoomFromKey(keyBuf, inviteFormat = INVITE_FORMAT_DISCOVERY) {
   const { invite } = createInvite(keyBuf, {
     expires: Date.now() + DEFAULT_INVITE_TTL_MS,
     additionalNodes: DEFAULT_INVITE_NODES
@@ -165,20 +189,36 @@ function createRoomFromKey(keyBuf) {
   if (!decoded.discoveryKey || decoded.discoveryKey.byteLength !== 32) {
     throw new Error('createInvite/decodeInvite failed: invalid discovery key')
   }
-  const roomId = z32.encode(invite)
+  const roomId = inviteFormat === INVITE_FORMAT_CANONICAL
+    ? z32.encode(invite)
+    : encodeCoreKey(decoded.discoveryKey)
   const inviteUrl = `pear://keet/${roomId}`
 
   const parsed = parseInviteUrl(inviteUrl)
   if (!parsed.discoveryKey.equals(Buffer.from(decoded.discoveryKey))) {
     throw new Error('Room validation failed: discovery key mismatch after URL decode')
   }
+  if (parsed.inviteFormat !== inviteFormat) {
+    throw new Error('Room validation failed: invite format mismatch after URL decode')
+  }
+
+  let discoveryRoomIdRoundtripOk = null
+  if (inviteFormat === INVITE_FORMAT_DISCOVERY) {
+    const roundtrip = decodeCoreKey(roomId)
+    discoveryRoomIdRoundtripOk = Buffer.from(roundtrip).equals(Buffer.from(decoded.discoveryKey))
+    if (!discoveryRoomIdRoundtripOk) {
+      throw new Error('Room validation failed: discovery-key roomId roundtrip mismatch')
+    }
+  }
 
   return {
     roomId,
     inviteUrl,
     discoveryKey: Buffer.from(decoded.discoveryKey),
-    inviteFormat: parsed.inviteFormat,
+    inviteFormat,
     inviteUrlLength: inviteUrl.length,
+    keetClientCompatible: inviteFormat === INVITE_FORMAT_DISCOVERY,
+    discoveryRoomIdRoundtripOk,
     ownerKeyHex: keyBuf.toString('hex'),
     ownerKeyBase64: keyBuf.toString('base64')
   }
@@ -361,20 +401,27 @@ async function main() {
       roomId: parsed.roomId,
       inviteUrl: parsed.inviteUrl,
       discoveryKey: parsed.discoveryKey,
+      inviteFormat: parsed.inviteFormat,
+      keetClientCompatible: parsed.inviteFormat === INVITE_FORMAT_DISCOVERY,
+      discoveryRoomIdRoundtripOk: parsed.inviteFormat === INVITE_FORMAT_DISCOVERY
+        ? Buffer.from(decodeCoreKey(parsed.roomId)).equals(parsed.discoveryKey)
+        : null,
       ownerKeyHex: null,
       ownerKeyBase64: null
     }
   } else {
     const key = cfg.key ? parseKey(cfg.key) : crypto.randomBytes(32)
-    room = createRoomFromKey(key)
+    room = createRoomFromKey(key, cfg.inviteFormat)
   }
 
   const summary = {
     ok: true,
     roomId: room.roomId,
     inviteUrl: room.inviteUrl,
-    inviteFormat: room.inviteFormat || 'legacy-discovery-key',
+    inviteFormat: room.inviteFormat || INVITE_FORMAT_DISCOVERY,
     inviteUrlLength: room.inviteUrl.length,
+    keetClientCompatible: room.keetClientCompatible,
+    discoveryRoomIdRoundtripOk: room.discoveryRoomIdRoundtripOk,
     discoveryKeyHex: room.discoveryKey.toString('hex'),
     ownerKeyHex: room.ownerKeyHex,
     ownerKeyBase64: room.ownerKeyBase64,

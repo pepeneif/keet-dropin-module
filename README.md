@@ -350,10 +350,18 @@ Create room and keep it alive:
 npm run test:keet:room -- --name Host
 ```
 
+By default, this test emits Keet-client-compatible invite links: `pear://keet/<roomId>`, where `roomId` is discovery-key encoded with `hypercore-id-encoding`.
+
 Create room only (no long-running session):
 
 ```bash
 npm run test:keet:room:create
+```
+
+Experimental long canonical blind-pairing invite format (opt-in only):
+
+```bash
+npm run test:keet:room -- --create-only --invite-format canonical
 ```
 
 Join an existing room from another terminal/machine:

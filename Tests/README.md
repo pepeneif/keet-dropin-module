@@ -57,10 +57,18 @@ Create room and stay online:
 npm --prefix ./Tests run run:room -- --name HostUser
 ```
 
+Default output uses Keet-client-compatible invite URLs (`pear://keet/<roomId>`) where `roomId` is discovery-key encoded with `hypercore-id-encoding`.
+
 Create room only (print metadata and exit):
 
 ```bash
 npm --prefix ./Tests run run:room:create
+```
+
+Create room using the long canonical blind-pairing invite format (experimental only):
+
+```bash
+npm --prefix ./Tests run run:room -- --create-only --invite-format canonical
 ```
 
 Join an existing room:
